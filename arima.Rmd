@@ -1,0 +1,216 @@
+---
+title: "Autoregressive Integrated Moving Average Time Series Analysis"
+author: "Marc Petta"
+date: ''
+output:
+  html_document:
+    df_print: paged
+---
+
+Time series analysis using autoregressive integrated moving average to predict incoming cardiovascular examinations at health centers located in Abbeville, Louisiana.
+
+
+```{r setup, message=FALSE, warning=FALSE}
+# set up
+library(dplyr)
+library(readxl)
+library(tidyr)
+library(ggplot2)
+library(gridExtra)
+library(mice)
+library(VIM)
+library(forecast)
+library(skimr)
+library(inspectdf)
+
+# load data
+heart2 = read_excel('data/heart2.xlsx', sheet = "Full", col_types = c("numeric", "numeric", "numeric", "numeric", "numeric", "numeric"))
+# review
+skim(heart2)
+
+```
+
+#### Missing Values
+Review and impute missing values
+
+##### Visualization
+Initial data exploration to determine numeric variable distributions and any missing values.
+
+```{r, echo=FALSE}
+library(inspectdf)
+numP = inspect_num(heart2)
+show_plot(numP)
+
+naP = inspect_na(heart2)
+show_plot(naP)
+
+
+```
+
+##### Imputation
+
+
+```{r, results='hide'}
+df <- mice(heart2, m=5, maxit=50, meth='pmm', seed=500)
+
+```
+
+### Modeling
+
+In order to determine the best course of action, two models will be built. The first model will be an autoregressive integrated moving average model (ARIMA). First we will create the time series from our data set.
+
+##### Data Preprocessing and Exploration
+An object needs to be assigned for the time series.
+
+```{r, results="hide"}
+
+# get object for time series
+final <- complete(df,1)
+# create a new object from the final dataset for use in the ARIMA model
+exams.final <- final$Exams
+# build a time series from data
+examTS  <- ts(exams.final)
+# review the new time series
+examTS
+
+```
+
+##### Visualization
+Next we will visualize our time series and do some exploration.
+
+```{R, echo=FALSE}
+
+# plot the time series to find any trends, seasonality, etc.
+plot(examTS, ylab = "Number of Exams", xlab = "Months",col="blue")
+
+```
+
+There is an increase in exam amounts as the months increase. This needs to be reviewed further. We will review the data in the time series by using the autocorrelation function (ACF) and the partial autocorrelation function (PACF). A plot of each follows.
+
+
+```{r, echo=FALSE}
+# assess the time series using ACF and PACF
+acf(examTS)
+pacf(examTS)
+
+```
+
+##### Transformations
+
+We can see in each a decline in each over Lag with a peak in the beginning. The data is to be transformed to be better suited for modeling. Diffing is applied for transformation and the results plotted. 
+
+```{r, results='hide', message=FALSE}
+# use diffing for data transformation
+ndiffs(x = examTS)
+# plot to see the effect of diffing
+plot(diff(examTS, 1),col="blue")
+
+```
+
+The plot illustrates that increase in time. The data is now finally ready for modeling.
+
+##### Fit Model
+
+```{r}
+
+# fit the ARIMA model
+myBestForecast  <- arima(x = examTS)
+# review the ARIMA model
+myBestForecast
+
+```
+
+The Akaike information criterion (AIC) here is 1683.7. This is noted for later comparisons. Now lets review the model as we did the time series data previously. Review the ACF, PACF, and coefficients of the ARIMA model residuals
+
+```{r, message=FALSE}
+
+# get the ACF and PACF of the ARIMA model residuals
+acf(myBestForecast$residuals)
+pacf(myBestForecast$residuals)
+# check the coefficients
+coef(myBestForecast)
+
+```
+
+We can see in the ACF that many exceed the significance bound. The PACF shows at least one which is in excess of this boundary as well.
+
+##### Predictions
+Lets proceed and make predictions with this model.
+
+```{r}
+
+# predict next five months using the ARIMA model
+NextForecasts  <- forecast (myBestForecast, h=5)
+# review the predictions 
+NextForecasts
+
+```
+
+##### Visualization
+Now lets visualize the predictions
+
+```{r, echo=FALSE}
+
+# plot the predictions
+plot(NextForecasts, col="blue")
+
+```
+
+##### Model Comparison
+
+Fit a second arima model assigning values for p,d,q to the model function call and determine its utility. Where p is the number of autoregressive terms, d is the number of nonseasonal differences needed for stationarity, and q is the number of lagged forecast errors in the prediction equation (Duke, 20). 
+https://people.duke.edu/~rnau/411arim.htm
+
+```{r}
+# try second ARIMA models - this time provide p,d,q values
+MyBestForecast2  <- arima(examTS, order=c(2,1,1))
+# review the second ARIMA model
+MyBestForecast2
+# check the ACF and PACF of the ARIMA model residuals
+acf(MyBestForecast2$residuals)
+pacf(MyBestForecast2$residuals)
+coef(MyBestForecast2)
+summary(MyBestForecast2)
+# # predict next five months using the second ARIMA model
+NextForecasts2  <- forecast (MyBestForecast2, h=5)
+# review the predictions from the second ARIMA model
+NextForecasts2
+# plot the predictions from the second ARIMA model
+plot(NextForecasts2, col="blue")
+
+```
+
+We can see that our second ARIMA model performed better as illustrated in the ACF and PACF. We can also see a substantially lower AIC at 1380.33. Given these findings we will proceed with this second model. 
+
+Next we will create a whole new model so that we can compare outputs. The model we will compare will be a exponential smoothing state space model call.
+
+```{r, echo=FALSE}
+
+NewForecasts <- forecast(examTS, h=5)
+acf(NewForecasts$residuals)
+pacf(NewForecasts$residuals)
+plot(NewForecasts, col="blue")
+
+
+```
+
+The plots look similar when comparing the ACF and PACF. Lets now review mean absolute percentage error (MAPE) from each model to determine which performs better and ultimately which is chosen. 
+
+```{r}
+summary(NewForecasts)
+
+```
+
+
+#### Conclusion
+
+In a final comparison of the two models we can see that the ACF and PACF of the final models are close. But when comparing the models MAPE we can see the ARIMA model actually performs better with an MAPE of 15.34894 as compared to that of the exponential smoothing state space model which had an MAPE of 13.42. 
+
+Given this information, this study suggests the use of the second ARIMA model MyBestForecast2 and the predictions that come from it.
+
+
+
+
+
+
+
